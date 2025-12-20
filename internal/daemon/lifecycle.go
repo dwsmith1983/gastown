@@ -19,10 +19,10 @@ type BeadsMessage struct {
 	Status      string `json:"status"`
 }
 
-// ProcessLifecycleRequests checks for and processes lifecycle requests from the daemon inbox.
+// ProcessLifecycleRequests checks for and processes lifecycle requests from the deacon inbox.
 func (d *Daemon) ProcessLifecycleRequests() {
-	// Get mail for daemon identity
-	cmd := exec.Command("bd", "mail", "inbox", "--identity", "daemon/", "--json")
+	// Get mail for deacon identity
+	cmd := exec.Command("bd", "mail", "inbox", "--identity", "deacon/", "--json")
 	cmd.Dir = d.config.TownRoot
 
 	output, err := cmd.Output()

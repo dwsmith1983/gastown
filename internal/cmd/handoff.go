@@ -225,7 +225,7 @@ func preFlightChecks() error {
 func getManager(role Role) string {
 	switch role {
 	case RoleMayor, RoleWitness:
-		return "daemon/"
+		return "deacon/"
 	case RolePolecat, RoleRefinery:
 		// Would need rig context to determine witness address
 		// For now, use a placeholder pattern
@@ -233,7 +233,7 @@ func getManager(role Role) string {
 	case RoleCrew:
 		return "human" // Crew is human-managed
 	default:
-		return "daemon/"
+		return "deacon/"
 	}
 }
 

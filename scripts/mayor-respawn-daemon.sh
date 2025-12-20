@@ -4,7 +4,7 @@
 #
 # Usage: mayor-respawn-daemon.sh [start|stop|status]
 #
-# The daemon monitors for mail to "daemon/" with subject containing "RESTART".
+# The daemon monitors for mail to "deacon/" with subject containing "RESTART".
 # When found, it:
 #   1. Acknowledges the mail
 #   2. Waits 5 seconds (for handoff mail to be sent)
@@ -23,10 +23,10 @@ log() {
 check_for_restart() {
     cd "$TOWN_ROOT" || return 1
 
-    # Check inbox for daemon identity - look for RESTART subject
-    # Set BD_IDENTITY=daemon so bd mail knows which inbox to check
+    # Check inbox for deacon identity - look for RESTART subject
+    # Set BD_IDENTITY=deacon so bd mail knows which inbox to check
     local inbox
-    inbox=$(BD_IDENTITY=daemon bd mail inbox --json 2>/dev/null)
+    inbox=$(BD_IDENTITY=deacon bd mail inbox --json 2>/dev/null)
 
     if [ -z "$inbox" ] || [ "$inbox" = "null" ] || [ "$inbox" = "[]" ]; then
         return 1
@@ -41,7 +41,7 @@ check_for_restart() {
         log "Found restart request: $msg_id"
 
         # Acknowledge the message
-        BD_IDENTITY=daemon bd mail ack "$msg_id" 2>/dev/null
+        BD_IDENTITY=deacon bd mail ack "$msg_id" 2>/dev/null
         log "Acknowledged restart request"
 
         # Wait for handoff to complete
