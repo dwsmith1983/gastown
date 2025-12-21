@@ -17,6 +17,7 @@ func BuiltinMolecules() []BuiltinMolecule {
 		InstallGoBinaryMolecule(),
 		BootstrapGasTownMolecule(),
 		PolecatWorkMolecule(),
+		VersionBumpMolecule(),
 	}
 }
 
@@ -388,6 +389,125 @@ Wait for termination.
 The polecat is now ready to be cleaned up.
 Do not exit directly - wait for Witness to kill the session.
 Needs: update-handoff`,
+	}
+}
+
+// VersionBumpMolecule returns the version-bump molecule definition.
+// This is the release checklist for Gas Town versions.
+func VersionBumpMolecule() BuiltinMolecule {
+	return BuiltinMolecule{
+		ID:    "mol-version-bump",
+		Title: "Version Bump",
+		Description: `Release checklist for Gas Town version {{version}}.
+
+This molecule ensures all release steps are completed properly.
+Replace {{version}} with the target version (e.g., 0.1.0).
+
+## Step: update-version
+Update version string in internal/cmd/version.go.
+
+Change the Version variable to the new version:
+` + "```" + `go
+var (
+    Version   = "{{version}}"
+    BuildTime = "unknown"
+    GitCommit = "unknown"
+)
+` + "```" + `
+
+## Step: rebuild-binary
+Rebuild the gt binary with version info.
+
+` + "```" + `bash
+go build -ldflags="-X github.com/steveyegge/gastown/internal/cmd.Version={{version}} \
+  -X github.com/steveyegge/gastown/internal/cmd.GitCommit=$(git rev-parse --short HEAD) \
+  -X github.com/steveyegge/gastown/internal/cmd.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  -o gt ./cmd/gt
+` + "```" + `
+
+Verify the version:
+` + "```" + `bash
+./gt version
+` + "```" + `
+
+Needs: update-version
+
+## Step: run-tests
+Run the full test suite.
+
+` + "```" + `bash
+go test ./...
+` + "```" + `
+
+Fix any failures before proceeding.
+Needs: rebuild-binary
+
+## Step: update-changelog
+Update CHANGELOG.md with release notes.
+
+Add a new section at the top:
+` + "```" + `markdown
+## [{{version}}] - YYYY-MM-DD
+
+### Added
+- Feature descriptions
+
+### Changed
+- Change descriptions
+
+### Fixed
+- Bug fix descriptions
+` + "```" + `
+
+Needs: run-tests
+
+## Step: commit-release
+Commit the release changes.
+
+` + "```" + `bash
+git add -A
+git commit -m "release: v{{version}}"
+` + "```" + `
+
+Needs: update-changelog
+
+## Step: tag-release
+Create and push the release tag.
+
+` + "```" + `bash
+git tag -a v{{version}} -m "Release v{{version}}"
+git push origin main
+git push origin v{{version}}
+` + "```" + `
+
+Needs: commit-release
+
+## Step: verify-release
+Verify the release is complete.
+
+- Check that the tag exists on GitHub
+- Verify CI/CD (if configured) completed successfully
+- Test installation from the new tag:
+` + "```" + `bash
+go install github.com/steveyegge/gastown/cmd/gt@v{{version}}
+gt version
+` + "```" + `
+
+Needs: tag-release
+
+## Step: update-installations
+Update local installations and restart daemons.
+
+` + "```" + `bash
+# Rebuild and install
+go install ./cmd/gt
+
+# Restart any running daemons
+pkill -f "gt daemon" || true
+gt daemon start
+` + "```" + `
+
+Needs: verify-release`,
 	}
 }
 
