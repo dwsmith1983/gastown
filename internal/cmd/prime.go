@@ -125,7 +125,8 @@ func runPrime(cmd *cobra.Command, args []string) error {
 	outputAttachmentStatus(ctx)
 
 	// Check for slung work on hook (from gt sling)
-	checkSlungWork(ctx)
+	// If found, we're in autonomous mode - skip normal startup directive
+	hasSlungWork := checkSlungWork(ctx)
 
 	// Output molecule context if working on a molecule step
 	outputMoleculeContext(ctx)
@@ -137,7 +138,10 @@ func runPrime(cmd *cobra.Command, args []string) error {
 	runMailCheckInject(cwd)
 
 	// Output startup directive for roles that should announce themselves
-	outputStartupDirective(ctx)
+	// Skip if in autonomous mode (slung work provides its own directive)
+	if !hasSlungWork {
+		outputStartupDirective(ctx)
+	}
 
 	return nil
 }
@@ -1273,35 +1277,85 @@ func outputRefineryPatrolContext(ctx RoleContext) {
 // checkSlungWork checks for slung work on the agent's hook.
 // If found, displays it prominently and tells the agent to execute it.
 // The wisp is burned after the agent acknowledges it.
-func checkSlungWork(ctx RoleContext) {
+// Returns true if slung work was found (caller should skip normal startup directive).
+func checkSlungWork(ctx RoleContext) bool {
 	// Determine agent identity for hook lookup
 	agentID := getAgentIdentity(ctx)
 	if agentID == "" {
-		return
+		return false
 	}
 
 	// Get the git clone root (hooks are stored at clone root, not cwd)
 	cloneRoot, err := getGitRoot()
 	if err != nil {
 		// Not in a git repo - can't have hooks
-		return
+		return false
 	}
 
 	sw, err := wisp.ReadHook(cloneRoot, agentID)
 	if err != nil {
 		if errors.Is(err, wisp.ErrNoHook) {
 			// No hook - normal case, nothing to do
-			return
+			return false
 		}
 		// Log other errors (permission, corruption) but continue
 		fmt.Printf("%s Warning: error reading hook: %v\n", style.Dim.Render("⚠"), err)
-		return
+		return false
 	}
 
-	// Found slung work! Display prominently
+	// Verify bead exists before showing autonomous mode
+	// Try multiple beads locations: cwd, clone root, and rig's beads dir
+	var stdout bytes.Buffer
+	beadExists := false
+	beadSearchDirs := []string{ctx.WorkDir, cloneRoot}
+	// For Mayor, also try the gastown rig's beads location
+	if ctx.Role == RoleMayor {
+		beadSearchDirs = append(beadSearchDirs, filepath.Join(ctx.TownRoot, "gastown", "mayor", "rig"))
+	}
+	for _, dir := range beadSearchDirs {
+		cmd := exec.Command("bd", "show", sw.BeadID)
+		cmd.Dir = dir
+		stdout.Reset()
+		cmd.Stdout = &stdout
+		cmd.Stderr = nil
+		if cmd.Run() == nil {
+			beadExists = true
+			break
+		}
+	}
+
+	if !beadExists {
+		fmt.Println()
+		fmt.Printf("%s\n\n", style.Bold.Render("## 🎯 SLUNG WORK ON HOOK"))
+		fmt.Printf("  Bead ID: %s\n", style.Bold.Render(sw.BeadID))
+		fmt.Printf("  %s Bead %s not found! It may have been deleted.\n",
+			style.Bold.Render("⚠ WARNING:"), sw.BeadID)
+		fmt.Println("  The hook will NOT be burned. Investigate this issue.")
+		fmt.Println()
+		// Don't burn - leave hook for debugging
+		return false
+	}
+
+	// Build the role announcement string
+	roleAnnounce := buildRoleAnnouncement(ctx)
+
+	// Found slung work! Display AUTONOMOUS MODE prominently
 	fmt.Println()
-	fmt.Printf("%s\n\n", style.Bold.Render("## 🎯 SLUNG WORK ON HOOK"))
-	fmt.Printf("Work was slung onto your hook and awaits execution.\n\n")
+	fmt.Printf("%s\n\n", style.Bold.Render("## 🚨 AUTONOMOUS WORK MODE 🚨"))
+	fmt.Println("Work is slung on your hook. After announcing your role, begin IMMEDIATELY.")
+	fmt.Println()
+	fmt.Println("1. Announce: \"" + roleAnnounce + "\" (ONE line, no elaboration)")
+	fmt.Printf("2. Then IMMEDIATELY run: `bd show %s`\n", sw.BeadID)
+	fmt.Println("3. Begin execution - no waiting for user input")
+	fmt.Println()
+	fmt.Println("**DO NOT:**")
+	fmt.Println("- Wait for user response after announcing")
+	fmt.Println("- Ask clarifying questions")
+	fmt.Println("- Describe what you're going to do")
+	fmt.Println()
+
+	// Show the slung work details
+	fmt.Printf("%s\n\n", style.Bold.Render("## Slung Work"))
 	fmt.Printf("  Bead ID: %s\n", style.Bold.Render(sw.BeadID))
 	if sw.Subject != "" {
 		fmt.Printf("  Subject: %s\n", sw.Subject)
@@ -1309,47 +1363,47 @@ func checkSlungWork(ctx RoleContext) {
 	if sw.Context != "" {
 		fmt.Printf("  Context: %s\n", sw.Context)
 	}
-	fmt.Printf("  Slung by: %s\n", sw.CreatedBy)
-	fmt.Printf("  Slung at: %s\n", sw.CreatedAt.Format("2006-01-02 15:04:05"))
+	fmt.Printf("  Slung by: %s at %s\n", sw.CreatedBy, sw.CreatedAt.Format("2006-01-02 15:04:05"))
 	fmt.Println()
 
-	// Show the bead details - verify it exists
-	fmt.Println("**Bead details:**")
-	cmd := exec.Command("bd", "show", sw.BeadID)
-	cmd.Dir = cloneRoot
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = nil
-	beadExists := cmd.Run() == nil
-	if beadExists {
-		// Show first 20 lines of bead details
-		lines := strings.Split(stdout.String(), "\n")
-		maxLines := 20
-		if len(lines) > maxLines {
-			lines = lines[:maxLines]
-			lines = append(lines, "...")
-		}
-		for _, line := range lines {
-			fmt.Printf("  %s\n", line)
-		}
-	} else {
-		fmt.Printf("  %s Bead %s not found! It may have been deleted.\n",
-			style.Bold.Render("⚠ WARNING:"), sw.BeadID)
-		fmt.Println("  The hook will NOT be burned. Investigate this issue.")
-		fmt.Println()
-		// Don't burn - leave hook for debugging
-		return
+	// Show bead preview (first 15 lines)
+	lines := strings.Split(stdout.String(), "\n")
+	maxLines := 15
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+		lines = append(lines, "...")
 	}
-	fmt.Println()
-
-	// The propulsion principle
-	fmt.Println(style.Bold.Render("→ PROPULSION PRINCIPLE: Work is on your hook. RUN IT."))
-	fmt.Println("  Begin working on this bead immediately. No human input needed.")
+	fmt.Println("**Bead preview:**")
+	for _, line := range lines {
+		fmt.Printf("  %s\n", line)
+	}
 	fmt.Println()
 
 	// Burn the hook now that it's been read and verified
 	if err := wisp.BurnHook(cloneRoot, agentID); err != nil {
 		fmt.Printf("%s Warning: could not burn hook: %v\n", style.Dim.Render("⚠"), err)
+	}
+
+	return true
+}
+
+// buildRoleAnnouncement creates the role announcement string for autonomous mode.
+func buildRoleAnnouncement(ctx RoleContext) string {
+	switch ctx.Role {
+	case RoleMayor:
+		return "Mayor, checking in."
+	case RoleDeacon:
+		return "Deacon, checking in."
+	case RoleWitness:
+		return fmt.Sprintf("%s Witness, checking in.", ctx.Rig)
+	case RoleRefinery:
+		return fmt.Sprintf("%s Refinery, checking in.", ctx.Rig)
+	case RolePolecat:
+		return fmt.Sprintf("%s Polecat %s, checking in.", ctx.Rig, ctx.Polecat)
+	case RoleCrew:
+		return fmt.Sprintf("%s Crew %s, checking in.", ctx.Rig, ctx.Polecat)
+	default:
+		return "Agent, checking in."
 	}
 }
 

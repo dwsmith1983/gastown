@@ -74,6 +74,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 	// Determine target agent (self or specified)
 	var targetAgent string
 	var targetPane string
+	var hookRoot string // Where to store the hook (role's home)
 	var err error
 
 	if len(args) > 1 {
@@ -82,19 +83,45 @@ func runSling(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("resolving target: %w", err)
 		}
-	} else {
-		// Slinging to self
-		targetAgent, err = detectAgentIdentity()
+		// For remote targets, use their home directory
+		// TODO: resolve target's home properly
+		hookRoot, err = detectCloneRoot()
 		if err != nil {
-			return fmt.Errorf("detecting agent identity: %w", err)
+			return fmt.Errorf("detecting clone root: %w", err)
+		}
+	} else {
+		// Slinging to self - use env-aware role detection
+		roleInfo, err := GetRole()
+		if err != nil {
+			return fmt.Errorf("detecting role: %w", err)
+		}
+		// Build agent identity from role
+		switch roleInfo.Role {
+		case RoleMayor:
+			targetAgent = "mayor"
+		case RoleDeacon:
+			targetAgent = "deacon"
+		case RoleWitness:
+			targetAgent = fmt.Sprintf("%s/witness", roleInfo.Rig)
+		case RoleRefinery:
+			targetAgent = fmt.Sprintf("%s/refinery", roleInfo.Rig)
+		case RolePolecat:
+			targetAgent = fmt.Sprintf("%s/polecats/%s", roleInfo.Rig, roleInfo.Polecat)
+		case RoleCrew:
+			targetAgent = fmt.Sprintf("%s/crew/%s", roleInfo.Rig, roleInfo.Polecat)
+		default:
+			return fmt.Errorf("cannot determine agent identity (role: %s)", roleInfo.Role)
 		}
 		targetPane = os.Getenv("TMUX_PANE")
-	}
-
-	// Get clone root for wisp storage
-	cloneRoot, err := detectCloneRoot()
-	if err != nil {
-		return fmt.Errorf("detecting clone root: %w", err)
+		// Use role's home for hook storage
+		hookRoot = roleInfo.Home
+		if hookRoot == "" {
+			// Fallback to git root if home not determined
+			hookRoot, err = detectCloneRoot()
+			if err != nil {
+				return fmt.Errorf("detecting clone root: %w", err)
+			}
+		}
 	}
 
 	// Create the slung work wisp
@@ -105,9 +132,10 @@ func runSling(cmd *cobra.Command, args []string) error {
 	fmt.Printf("%s Slinging %s to %s...\n", style.Bold.Render("🎯"), beadID, targetAgent)
 
 	if slingDryRun {
-		fmt.Printf("Would create wisp: %s\n", wisp.HookPath(cloneRoot, targetAgent))
+		fmt.Printf("Would create wisp: %s\n", wisp.HookPath(hookRoot, targetAgent))
 		fmt.Printf("  bead_id: %s\n", beadID)
 		fmt.Printf("  agent: %s\n", targetAgent)
+		fmt.Printf("  hook_root: %s\n", hookRoot)
 		if slingSubject != "" {
 			fmt.Printf("  subject: %s\n", slingSubject)
 		}
@@ -119,7 +147,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 	}
 
 	// Write the wisp to the hook
-	if err := wisp.WriteSlungWork(cloneRoot, targetAgent, sw); err != nil {
+	if err := wisp.WriteSlungWork(hookRoot, targetAgent, sw); err != nil {
 		return fmt.Errorf("writing wisp: %w", err)
 	}
 
