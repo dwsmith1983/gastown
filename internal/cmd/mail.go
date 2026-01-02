@@ -268,6 +268,32 @@ Examples:
 	RunE: runMailClaim,
 }
 
+var mailReleaseCmd = &cobra.Command{
+	Use:   "release <message-id>",
+	Short: "Release a claimed queue message",
+	Long: `Release a previously claimed message back to its queue.
+
+SYNTAX:
+  gt mail release <message-id>
+
+BEHAVIOR:
+1. Find the message by ID
+2. Verify caller is the one who claimed it (assignee matches)
+3. Set assignee back to queue:<name> (from message labels)
+4. Set status back to open
+5. Message returns to queue for others to claim
+
+ERROR CASES:
+- Message not found
+- Message not claimed (still assigned to queue)
+- Caller did not claim this message
+
+Examples:
+  gt mail release hq-abc123    # Release a claimed message`,
+	Args: cobra.ExactArgs(1),
+	RunE: runMailRelease,
+}
+
 func init() {
 	// Send flags
 	mailSendCmd.Flags().StringVarP(&mailSubject, "subject", "s", "", "Message subject (required)")
@@ -318,6 +344,7 @@ func init() {
 	mailCmd.AddCommand(mailThreadCmd)
 	mailCmd.AddCommand(mailReplyCmd)
 	mailCmd.AddCommand(mailClaimCmd)
+	mailCmd.AddCommand(mailReleaseCmd)
 
 	rootCmd.AddCommand(mailCmd)
 }
@@ -1310,6 +1337,149 @@ func claimMessage(townRoot, messageID, claimant string) error {
 	cmd.Env = append(os.Environ(),
 		"BEADS_DIR="+beadsDir,
 		"BD_ACTOR="+claimant,
+	)
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg != "" {
+			return fmt.Errorf("%s", errMsg)
+		}
+		return err
+	}
+
+	return nil
+}
+
+// runMailRelease releases a claimed queue message back to its queue.
+func runMailRelease(cmd *cobra.Command, args []string) error {
+	messageID := args[0]
+
+	// Find workspace
+	townRoot, err := workspace.FindFromCwdOrError()
+	if err != nil {
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+
+	// Get caller identity
+	caller := detectSender()
+
+	// Get message details to verify ownership and find queue
+	msgInfo, err := getMessageInfo(townRoot, messageID)
+	if err != nil {
+		return fmt.Errorf("getting message: %w", err)
+	}
+
+	// Verify message exists and is a queue message
+	if msgInfo.QueueName == "" {
+		return fmt.Errorf("message %s is not a queue message (no queue label)", messageID)
+	}
+
+	// Verify caller is the one who claimed it
+	if msgInfo.Assignee != caller {
+		if strings.HasPrefix(msgInfo.Assignee, "queue:") {
+			return fmt.Errorf("message %s is not claimed (still in queue)", messageID)
+		}
+		return fmt.Errorf("message %s was claimed by %s, not %s", messageID, msgInfo.Assignee, caller)
+	}
+
+	// Release the message: set assignee back to queue and status to open
+	queueAssignee := "queue:" + msgInfo.QueueName
+	if err := releaseMessage(townRoot, messageID, queueAssignee, caller); err != nil {
+		return fmt.Errorf("releasing message: %w", err)
+	}
+
+	fmt.Printf("%s Released message back to queue %s\n", style.Bold.Render("✓"), msgInfo.QueueName)
+	fmt.Printf("  ID: %s\n", messageID)
+	fmt.Printf("  Subject: %s\n", msgInfo.Title)
+
+	return nil
+}
+
+// messageInfo holds details about a queue message.
+type messageInfo struct {
+	ID        string
+	Title     string
+	Assignee  string
+	QueueName string
+	Status    string
+}
+
+// getMessageInfo retrieves information about a message.
+func getMessageInfo(townRoot, messageID string) (*messageInfo, error) {
+	beadsDir := filepath.Join(townRoot, ".beads")
+
+	args := []string{"show", messageID, "--json"}
+
+	cmd := exec.Command("bd", args...)
+	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		errMsg := strings.TrimSpace(stderr.String())
+		if strings.Contains(errMsg, "not found") {
+			return nil, fmt.Errorf("message not found: %s", messageID)
+		}
+		if errMsg != "" {
+			return nil, fmt.Errorf("%s", errMsg)
+		}
+		return nil, err
+	}
+
+	// Parse JSON output - bd show --json returns an array
+	var issues []struct {
+		ID       string   `json:"id"`
+		Title    string   `json:"title"`
+		Assignee string   `json:"assignee"`
+		Labels   []string `json:"labels"`
+		Status   string   `json:"status"`
+	}
+
+	if err := json.Unmarshal(stdout.Bytes(), &issues); err != nil {
+		return nil, fmt.Errorf("parsing message: %w", err)
+	}
+
+	if len(issues) == 0 {
+		return nil, fmt.Errorf("message not found: %s", messageID)
+	}
+
+	issue := issues[0]
+	info := &messageInfo{
+		ID:       issue.ID,
+		Title:    issue.Title,
+		Assignee: issue.Assignee,
+		Status:   issue.Status,
+	}
+
+	// Extract queue name from labels (format: "queue:<name>")
+	for _, label := range issue.Labels {
+		if strings.HasPrefix(label, "queue:") {
+			info.QueueName = strings.TrimPrefix(label, "queue:")
+			break
+		}
+	}
+
+	return info, nil
+}
+
+// releaseMessage releases a claimed message back to its queue.
+func releaseMessage(townRoot, messageID, queueAssignee, actor string) error {
+	beadsDir := filepath.Join(townRoot, ".beads")
+
+	args := []string{"update", messageID,
+		"--assignee", queueAssignee,
+		"--status", "open",
+	}
+
+	cmd := exec.Command("bd", args...)
+	cmd.Env = append(os.Environ(),
+		"BEADS_DIR="+beadsDir,
+		"BD_ACTOR="+actor,
 	)
 
 	var stderr bytes.Buffer
