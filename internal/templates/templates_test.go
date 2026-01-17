@@ -3,6 +3,8 @@ package templates
 import (
 	"strings"
 	"testing"
+
+	"github.com/steveyegge/gastown/internal/config"
 )
 
 func TestNew(t *testing.T) {
@@ -293,5 +295,145 @@ func TestGetAllRoleTemplates_ContentValidity(t *testing.T) {
 		if !strings.Contains(contentStr, "Context") {
 			t.Errorf("%s doesn't contain 'Context' - may not be a valid role template", name)
 		}
+	}
+}
+
+func TestGetRoleContent_NoOverride(t *testing.T) {
+	// With nil settings, should fall back to embedded template
+	data := RoleData{
+		Role:          "mayor",
+		TownRoot:      "/test/town",
+		TownName:      "town",
+		WorkDir:       "/test/town",
+		DefaultBranch: "main",
+		MayorSession:  "gt-town-mayor",
+		DeaconSession: "gt-town-deacon",
+	}
+
+	output, err := GetRoleContent("mayor", data, nil, nil)
+	if err != nil {
+		t.Fatalf("GetRoleContent() error = %v", err)
+	}
+
+	// Should contain content from embedded template
+	if !strings.Contains(output, "Mayor Context") {
+		t.Error("output missing 'Mayor Context' from embedded template")
+	}
+}
+
+func TestGetRoleContent_TownOverride(t *testing.T) {
+	customContent := "# Custom Mayor Context\n\nThis is a custom mayor context."
+	townSettings := &config.TownSettings{
+		Context: &config.ContextConfig{
+			Roles: map[string]string{
+				"mayor": customContent,
+			},
+		},
+	}
+
+	data := RoleData{
+		Role:     "mayor",
+		TownRoot: "/test/town",
+	}
+
+	output, err := GetRoleContent("mayor", data, townSettings, nil)
+	if err != nil {
+		t.Fatalf("GetRoleContent() error = %v", err)
+	}
+
+	if output != customContent {
+		t.Errorf("GetRoleContent() = %q, want %q", output, customContent)
+	}
+}
+
+func TestGetRoleContent_RigOverride(t *testing.T) {
+	customContent := "# Rig-specific Mayor Context\n\nCustom for this rig."
+	rigSettings := &config.RigSettings{
+		Context: &config.ContextConfig{
+			Roles: map[string]string{
+				"mayor": customContent,
+			},
+		},
+	}
+
+	data := RoleData{
+		Role:     "mayor",
+		TownRoot: "/test/town",
+	}
+
+	output, err := GetRoleContent("mayor", data, nil, rigSettings)
+	if err != nil {
+		t.Fatalf("GetRoleContent() error = %v", err)
+	}
+
+	if output != customContent {
+		t.Errorf("GetRoleContent() = %q, want %q", output, customContent)
+	}
+}
+
+func TestGetRoleContent_RigOverridesTownPrecedence(t *testing.T) {
+	townContent := "# Town Mayor Context"
+	rigContent := "# Rig Mayor Context"
+
+	townSettings := &config.TownSettings{
+		Context: &config.ContextConfig{
+			Roles: map[string]string{
+				"mayor": townContent,
+			},
+		},
+	}
+	rigSettings := &config.RigSettings{
+		Context: &config.ContextConfig{
+			Roles: map[string]string{
+				"mayor": rigContent,
+			},
+		},
+	}
+
+	data := RoleData{
+		Role:     "mayor",
+		TownRoot: "/test/town",
+	}
+
+	output, err := GetRoleContent("mayor", data, townSettings, rigSettings)
+	if err != nil {
+		t.Fatalf("GetRoleContent() error = %v", err)
+	}
+
+	// Rig should take precedence over town
+	if output != rigContent {
+		t.Errorf("GetRoleContent() = %q, want %q (rig should override town)", output, rigContent)
+	}
+}
+
+func TestGetRoleContent_PartialOverride(t *testing.T) {
+	// Town has override for mayor, but we're asking for witness
+	townSettings := &config.TownSettings{
+		Context: &config.ContextConfig{
+			Roles: map[string]string{
+				"mayor": "# Custom Mayor",
+			},
+		},
+	}
+
+	data := RoleData{
+		Role:          "witness",
+		RigName:       "testrig",
+		TownRoot:      "/test/town",
+		TownName:      "town",
+		WorkDir:       "/test/town/testrig/witness/rig",
+		DefaultBranch: "main",
+		MayorSession:  "gt-town-mayor",
+		DeaconSession: "gt-town-deacon",
+	}
+
+	output, err := GetRoleContent("witness", data, townSettings, nil)
+	if err != nil {
+		t.Fatalf("GetRoleContent() error = %v", err)
+	}
+
+	// Should fall back to embedded template for witness
+	if !strings.Contains(output, "Witness Context") {
+		t.Error("output missing 'Witness Context' - should fall back to embedded template")
 	}
 }
