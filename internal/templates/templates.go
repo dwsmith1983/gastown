@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"text/template"
+
+	"github.com/steveyegge/gastown/internal/config"
 )
 
 //go:embed roles/*.md.tmpl messages/*.md.tmpl
@@ -269,4 +271,22 @@ func MissingCommands(workspacePath string) ([]string, error) {
 	}
 
 	return missing, nil
+}
+
+// GetRoleContent returns the role context content, checking config overrides first.
+// Resolution order: Rig settings → Town settings → Default embedded template.
+// This allows users to customize role contexts via settings/config.json.
+func GetRoleContent(role string, data RoleData, townSettings *config.TownSettings, rigSettings *config.RigSettings) (string, error) {
+	// Check for config override
+	override := config.ResolveRoleContext(townSettings, rigSettings, role)
+	if override != "" {
+		return override, nil
+	}
+
+	// Fall back to embedded template
+	tmpl, err := New()
+	if err != nil {
+		return "", err
+	}
+	return tmpl.RenderRole(role, data)
 }
