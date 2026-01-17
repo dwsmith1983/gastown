@@ -215,6 +215,16 @@ func runDone(cmd *cobra.Command, args []string) error {
 		agentBeadID = getAgentBeadID(ctx)
 	}
 
+	// If issue ID not set by flag or branch name, try agent's hook_bead.
+	// This handles cases where branch name doesn't contain issue ID
+	// (e.g., "polecat/furiosa-mkb0vq9f" doesn't have the actual issue).
+	if issueID == "" && agentBeadID != "" {
+		bd := beads.New(beads.ResolveBeadsDir(cwd))
+		if hookIssue := getIssueFromAgentHook(bd, agentBeadID); hookIssue != "" {
+			issueID = hookIssue
+		}
+	}
+
 	// Get configured default branch for this rig
 	defaultBranch := "main" // fallback
 	if rigCfg, err := rig.LoadRigConfig(filepath.Join(townRoot, rigName)); err == nil && rigCfg.DefaultBranch != "" {
@@ -263,6 +273,16 @@ func runDone(cmd *cobra.Command, args []string) error {
 		if aheadCount == 0 {
 			return fmt.Errorf("branch '%s' has 0 commits ahead of %s; nothing to merge\nMake and commit changes first, or use --status DEFERRED to exit without completing", branch, originDefault)
 		}
+
+		// CRITICAL: Push branch BEFORE creating MR bead (hq-6dk53, hq-a4ksk)
+		// The MR bead triggers Refinery to process this branch. If the branch
+		// isn't pushed yet, Refinery finds nothing to merge. The worktree gets
+		// nuked at the end of gt done, so the commits are lost forever.
+		fmt.Printf("Pushing branch to remote...\n")
+		if err := g.Push("origin", branch, false); err != nil {
+			return fmt.Errorf("pushing branch '%s' to origin: %w\nCommits exist locally but failed to push. Fix the issue and retry.", branch, err)
+		}
+		fmt.Printf("%s Branch pushed to origin\n", style.Bold.Render("✓"))
 
 		if issueID == "" {
 			return fmt.Errorf("cannot determine source issue from branch '%s'; use --issue to specify", branch)
@@ -605,6 +625,21 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, _ string) { // issueID unus
 			}
 		}
 	}
+}
+
+// getIssueFromAgentHook retrieves the issue ID from an agent's hook_bead field.
+// This is the authoritative source for what work a polecat is doing, since branch
+// names may not contain the issue ID (e.g., "polecat/furiosa-mkb0vq9f").
+// Returns empty string if agent doesn't exist or has no hook.
+func getIssueFromAgentHook(bd *beads.Beads, agentBeadID string) string {
+	if agentBeadID == "" {
+		return ""
+	}
+	agentBead, err := bd.Show(agentBeadID)
+	if err != nil {
+		return ""
+	}
+	return agentBead.HookBead
 }
 
 // getDispatcherFromBead retrieves the dispatcher agent ID from the bead's attachment fields.

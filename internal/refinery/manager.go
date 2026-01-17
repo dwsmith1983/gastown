@@ -115,9 +115,8 @@ func (m *Manager) Start(foreground bool, agentOverride string) error {
 
 	if foreground {
 		// In foreground mode, check tmux session (no PID inference per ZFC)
-		townRoot := filepath.Dir(m.rig.Path)
-		agentCfg := config.ResolveRoleAgentConfig(constants.RoleRefinery, townRoot, m.rig.Path)
-		if running, _ := t.HasSession(sessionID); running && t.IsAgentRunning(sessionID, config.ExpectedPaneCommands(agentCfg)...) {
+		// Use IsClaudeRunning for robust detection (see gastown#566)
+		if running, _ := t.HasSession(sessionID); running && t.IsClaudeRunning(sessionID) {
 			return ErrAlreadyRunning
 		}
 
@@ -138,14 +137,15 @@ func (m *Manager) Start(foreground bool, agentOverride string) error {
 	// Background mode: check if session already exists
 	running, _ := t.HasSession(sessionID)
 	if running {
-		// Session exists - check if agent is actually running (healthy vs zombie)
-		townRoot := filepath.Dir(m.rig.Path)
-		agentCfg := config.ResolveRoleAgentConfig(constants.RoleRefinery, townRoot, m.rig.Path)
-		if t.IsAgentRunning(sessionID, config.ExpectedPaneCommands(agentCfg)...) {
-			// Healthy - agent is running
+		// Session exists - check if Claude is actually running (healthy vs zombie)
+		// Use IsClaudeRunning for robust detection: Claude can report as "node", "claude",
+		// or version number like "2.0.76". IsAgentRunning with just "node" was too strict
+		// and caused healthy sessions to be killed. See: gastown#566
+		if t.IsClaudeRunning(sessionID) {
+			// Healthy - Claude is running
 			return ErrAlreadyRunning
 		}
-		// Zombie - tmux alive but agent dead. Kill and recreate.
+		// Zombie - tmux alive but Claude dead. Kill and recreate.
 		_, _ = fmt.Fprintln(m.output, "⚠ Detected zombie session (tmux alive, agent dead). Recreating...")
 		if err := t.KillSession(sessionID); err != nil {
 			return fmt.Errorf("killing zombie session: %w", err)
@@ -174,16 +174,16 @@ func (m *Manager) Start(foreground bool, agentOverride string) error {
 	}
 
 	// Build startup command first
-	bdActor := fmt.Sprintf("%s/refinery", m.rig.Name)
+	townRoot := filepath.Dir(m.rig.Path)
 	var command string
 	if agentOverride != "" {
 		var err error
-		command, err = config.BuildAgentStartupCommandWithAgentOverride("refinery", bdActor, m.rig.Path, "", agentOverride)
+		command, err = config.BuildAgentStartupCommandWithAgentOverride("refinery", m.rig.Name, townRoot, m.rig.Path, "", agentOverride)
 		if err != nil {
 			return fmt.Errorf("building startup command with agent override: %w", err)
 		}
 	} else {
-		command = config.BuildAgentStartupCommand("refinery", bdActor, m.rig.Path, "")
+		command = config.BuildAgentStartupCommand("refinery", m.rig.Name, townRoot, m.rig.Path, "")
 	}
 
 	// Create session with command directly to avoid send-keys race condition.
@@ -194,12 +194,10 @@ func (m *Manager) Start(foreground bool, agentOverride string) error {
 
 	// Set environment variables (non-fatal: session works without these)
 	// Use centralized AgentEnv for consistency across all role startup paths
-	townRoot := filepath.Dir(m.rig.Path)
 	envVars := config.AgentEnv(config.AgentEnvConfig{
 		Role:          "refinery",
 		Rig:           m.rig.Name,
 		TownRoot:      townRoot,
-		BeadsDir:      beads.ResolveBeadsDir(m.rig.Path),
 		BeadsNoDaemon: true,
 	})
 

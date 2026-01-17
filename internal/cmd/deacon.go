@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/util"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -235,6 +237,27 @@ This removes the pause file and allows the Deacon to work normally.`,
 	RunE: runDeaconResume,
 }
 
+var deaconCleanupOrphansCmd = &cobra.Command{
+	Use:   "cleanup-orphans",
+	Short: "Clean up orphaned claude subagent processes",
+	Long: `Clean up orphaned claude subagent processes.
+
+Claude Code's Task tool spawns subagent processes that sometimes don't clean up
+properly after completion. These accumulate and consume significant memory.
+
+Detection is based on TTY column: processes with TTY "?" have no controlling
+terminal. Legitimate claude instances in terminals have a TTY like "pts/0".
+
+This is safe because:
+- Processes in terminals (your personal sessions) have a TTY - won't be touched
+- Only kills processes that have no controlling terminal
+- These orphans are children of the tmux server with no TTY
+
+Example:
+  gt deacon cleanup-orphans`,
+	RunE: runDeaconCleanupOrphans,
+}
+
 var (
 	triggerTimeout time.Duration
 
@@ -269,6 +292,7 @@ func init() {
 	deaconCmd.AddCommand(deaconStaleHooksCmd)
 	deaconCmd.AddCommand(deaconPauseCmd)
 	deaconCmd.AddCommand(deaconResumeCmd)
+	deaconCmd.AddCommand(deaconCleanupOrphansCmd)
 
 	// Flags for trigger-pending
 	deaconTriggerPendingCmd.Flags().DurationVar(&triggerTimeout, "timeout", 2*time.Second,
@@ -348,12 +372,12 @@ func startDeaconSession(t *tmux.Tmux, sessionName, agentOverride string) error {
 
 	// Ensure Claude settings exist (autonomous role needs mail in SessionStart)
 	if err := claude.EnsureSettingsForRole(deaconDir, "deacon"); err != nil {
-		style.PrintWarning("Could not create deacon settings: %v", err)
+		return fmt.Errorf("creating deacon settings: %w", err)
 	}
 
 	// Build startup command first
 	// Export GT_ROLE and BD_ACTOR in the command since tmux SetEnvironment only affects new panes
-	startupCmd, err := config.BuildAgentStartupCommandWithAgentOverride("deacon", "deacon", "", "", agentOverride)
+	startupCmd, err := config.BuildAgentStartupCommandWithAgentOverride("deacon", "", townRoot, "", "", agentOverride)
 	if err != nil {
 		return fmt.Errorf("building startup command: %w", err)
 	}
@@ -370,7 +394,6 @@ func startDeaconSession(t *tmux.Tmux, sessionName, agentOverride string) error {
 	envVars := config.AgentEnv(config.AgentEnvConfig{
 		Role:     "deacon",
 		TownRoot: townRoot,
-		BeadsDir: beads.ResolveBeadsDir(townRoot),
 	})
 	for k, v := range envVars {
 		_ = t.SetEnvironment(sessionName, k, v)
@@ -381,9 +404,9 @@ func startDeaconSession(t *tmux.Tmux, sessionName, agentOverride string) error {
 	theme := tmux.DeaconTheme()
 	_ = t.ConfigureGasTownSession(sessionName, theme, "", "Deacon", "health-check")
 
-	// Wait for Claude to start (non-fatal)
+	// Wait for Claude to start
 	if err := t.WaitForCommand(sessionName, constants.SupportedShells, constants.ClaudeStartTimeout); err != nil {
-		// Non-fatal
+		return fmt.Errorf("waiting for deacon to start: %w", err)
 	}
 	time.Sleep(constants.ShutdownNotifyDelay)
 
@@ -391,17 +414,21 @@ func startDeaconSession(t *tmux.Tmux, sessionName, agentOverride string) error {
 	_ = runtime.RunStartupFallback(t, sessionName, "deacon", runtimeConfig)
 
 	// Inject startup nudge for predecessor discovery via /resume
-	_ = session.StartupNudge(t, sessionName, session.StartupNudgeConfig{
+	if err := session.StartupNudge(t, sessionName, session.StartupNudgeConfig{
 		Recipient: "deacon",
 		Sender:    "daemon",
 		Topic:     "patrol",
-	}) // Non-fatal
+	}); err != nil {
+		style.PrintWarning("failed to send startup nudge: %v", err)
+	}
 
 	// GUPP: Gas Town Universal Propulsion Principle
 	// Send the propulsion nudge to trigger autonomous patrol execution.
 	// Wait for beacon to be fully processed (needs to be separate prompt)
 	time.Sleep(2 * time.Second)
-	_ = t.NudgeSession(sessionName, session.PropulsionNudgeForRole("deacon", deaconDir)) // Non-fatal
+	if err := t.NudgeSession(sessionName, session.PropulsionNudgeForRole("deacon", deaconDir)); err != nil {
+		return fmt.Errorf("sending propulsion nudge: %w", err)
+	}
 
 	return nil
 }
@@ -699,25 +726,35 @@ func runDeaconHealthCheck(cmd *cobra.Command, args []string) error {
 	fmt.Printf("%s Sent HEALTH_CHECK to %s, waiting %s...\n",
 		style.Bold.Render("→"), agent, healthCheckTimeout)
 
-	// Wait for response
-	deadline := time.Now().Add(healthCheckTimeout)
+	// Wait for response using context and ticker for reliability
+	// This prevents loop hangs if system clock changes
+	ctx, cancel := context.WithTimeout(context.Background(), healthCheckTimeout)
+	defer cancel()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
 	responded := false
 
-	for time.Now().Before(deadline) {
-		time.Sleep(2 * time.Second) // Check every 2 seconds
+	for {
+		select {
+		case <-ctx.Done():
+			goto Done
+		case <-ticker.C:
+			newTime, err := getAgentBeadUpdateTime(townRoot, beadID)
+			if err != nil {
+				continue
+			}
 
-		newTime, err := getAgentBeadUpdateTime(townRoot, beadID)
-		if err != nil {
-			continue
-		}
-
-		// If bead was updated after our baseline, agent responded
-		if newTime.After(baselineTime) {
-			responded = true
-			break
+			// If bead was updated after our baseline, agent responded
+			if newTime.After(baselineTime) {
+				responded = true
+				goto Done
+			}
 		}
 	}
 
+Done:
 	// Record result
 	if responded {
 		agentState.RecordResponse()
@@ -1088,6 +1125,57 @@ func runDeaconResume(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("%s Deacon resumed\n", style.Bold.Render("▶️"))
 	fmt.Println("The Deacon can now perform patrol actions.")
+
+	return nil
+}
+
+// runDeaconCleanupOrphans cleans up orphaned claude subagent processes.
+func runDeaconCleanupOrphans(cmd *cobra.Command, args []string) error {
+	// First, find orphans
+	orphans, err := util.FindOrphanedClaudeProcesses()
+	if err != nil {
+		return fmt.Errorf("finding orphaned processes: %w", err)
+	}
+
+	if len(orphans) == 0 {
+		fmt.Printf("%s No orphaned claude processes found\n", style.Dim.Render("○"))
+		return nil
+	}
+
+	fmt.Printf("%s Found %d orphaned claude process(es)\n", style.Bold.Render("●"), len(orphans))
+
+	// Process them with signal escalation
+	results, err := util.CleanupOrphanedClaudeProcesses()
+	if err != nil {
+		style.PrintWarning("cleanup had errors: %v", err)
+	}
+
+	// Report results
+	var terminated, escalated, unkillable int
+	for _, r := range results {
+		switch r.Signal {
+		case "SIGTERM":
+			fmt.Printf("  %s Sent SIGTERM to PID %d (%s)\n", style.Bold.Render("→"), r.Process.PID, r.Process.Cmd)
+			terminated++
+		case "SIGKILL":
+			fmt.Printf("  %s Escalated to SIGKILL for PID %d (%s)\n", style.Bold.Render("!"), r.Process.PID, r.Process.Cmd)
+			escalated++
+		case "UNKILLABLE":
+			fmt.Printf("  %s WARNING: PID %d (%s) survived SIGKILL\n", style.Bold.Render("⚠"), r.Process.PID, r.Process.Cmd)
+			unkillable++
+		}
+	}
+
+	if len(results) > 0 {
+		summary := fmt.Sprintf("Processed %d orphan(s)", len(results))
+		if escalated > 0 {
+			summary += fmt.Sprintf(" (%d escalated to SIGKILL)", escalated)
+		}
+		if unkillable > 0 {
+			summary += fmt.Sprintf(" (%d unkillable)", unkillable)
+		}
+		fmt.Printf("%s %s\n", style.Bold.Render("✓"), summary)
+	}
 
 	return nil
 }

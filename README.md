@@ -86,6 +86,7 @@ Git-backed issue tracking system that stores work state as structured data.
 - **Go 1.23+** - [go.dev/dl](https://go.dev/dl/)
 - **Git 2.25+** - for worktree support
 - **beads (bd) 0.44.0+** - [github.com/steveyegge/beads](https://github.com/steveyegge/beads) (required for custom type support)
+- **sqlite3** - for convoy database queries (usually pre-installed on macOS/Linux)
 - **tmux 3.0+** - recommended for full experience
 - **Claude Code CLI** (default runtime) - [claude.ai/code](https://claude.ai/code)
 - **Codex CLI** (optional runtime) - [developers.openai.com/codex/cli](https://developers.openai.com/codex/cli)
@@ -115,6 +116,18 @@ gt mayor attach
 ```
 
 ## Quick Start Guide
+
+### Getting Started
+Run 
+```shell
+gt install ~/gt --git && 
+cd ~/gt && 
+gt config agent list && 
+gt mayor attach
+```
+and tell the Mayor what you want to build!
+
+---
 
 ### Basic Workflow
 
@@ -475,7 +488,3 @@ gt mayor attach
 ## License
 
 MIT License - see LICENSE file for details
-
----
-
-**Getting Started:** Run `gt install ~/gt --git && cd ~/gt && gt config agent list && gt mayor attach` (or `gt mayor attach --agent codex`) and tell the Mayor what you want to build!

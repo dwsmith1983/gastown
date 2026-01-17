@@ -380,8 +380,9 @@ func runSling(cmd *cobra.Command, args []string) error {
 		formulaWorkDir := beads.ResolveHookDir(townRoot, beadID, hookWorkDir)
 
 		// Step 1: Cook the formula (ensures proto exists)
-		// Cook doesn't need database context - runs from cwd like gt formula show
+		// Cook runs from rig directory to access the correct formula database
 		cookCmd := exec.Command("bd", "--no-daemon", "cook", formulaName)
+		cookCmd.Dir = formulaWorkDir
 		cookCmd.Stderr = os.Stderr
 		if err := cookCmd.Run(); err != nil {
 			return fmt.Errorf("cooking formula %s: %w", formulaName, err)
@@ -432,6 +433,13 @@ func runSling(cmd *cobra.Command, args []string) error {
 		}
 
 		fmt.Printf("%s Formula bonded to %s\n", style.Bold.Render("✓"), beadID)
+
+		// Record the attached molecule in the wisp's description.
+		// This is required for gt hook to recognize the molecule attachment.
+		if err := storeAttachedMoleculeInBead(wispRootID, wispRootID); err != nil {
+			// Warn but don't fail - polecat can still work through steps
+			fmt.Printf("%s Could not store attached_molecule: %v\n", style.Dim.Render("Warning:"), err)
+		}
 
 		// Update beadID to hook the compound root instead of bare bead
 		beadID = wispRootID

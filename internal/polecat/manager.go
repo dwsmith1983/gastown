@@ -249,9 +249,18 @@ func (m *Manager) AddWithOptions(name string, opts AddOptions) (*Polecat, error)
 	polecatDir := m.polecatDir(name)
 	clonePath := filepath.Join(polecatDir, m.rig.Name)
 
-	// Unique branch per run - prevents drift from stale branches
-	// Use base36 encoding for shorter branch names (8 chars vs 13 digits)
-	branchName := fmt.Sprintf("polecat/%s-%s", name, strconv.FormatInt(time.Now().UnixMilli(), 36))
+	// Branch naming: include issue ID when available for better traceability.
+	// Format: polecat/<worker>/<issue>@<timestamp> when HookBead is set
+	// The @timestamp suffix ensures uniqueness if the same issue is re-slung.
+	// parseBranchName strips the @suffix to extract the issue ID.
+	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 36)
+	var branchName string
+	if opts.HookBead != "" {
+		branchName = fmt.Sprintf("polecat/%s/%s@%s", name, opts.HookBead, timestamp)
+	} else {
+		// Fallback to timestamp format when no issue is known at spawn time
+		branchName = fmt.Sprintf("polecat/%s-%s", name, timestamp)
+	}
 
 	// Create polecat directory (polecats/<name>/)
 	if err := os.MkdirAll(polecatDir, 0755); err != nil {
@@ -434,11 +443,22 @@ func (m *Manager) RemoveWithOptions(name string, force, nuclear bool) error {
 		if removeErr := os.RemoveAll(clonePath); removeErr != nil {
 			return fmt.Errorf("removing clone path: %w", removeErr)
 		}
+	} else {
+		// GT-1L3MY9: git worktree remove may leave untracked directories behind.
+		// Clean up any leftover .beads/ directory that wasn't fully removed.
+		cloneBeadsDir := filepath.Join(clonePath, ".beads")
+		_ = os.RemoveAll(cloneBeadsDir)
+		// Remove the now-empty clonePath if it still exists
+		_ = os.Remove(clonePath)
 	}
 
 	// Also remove the parent polecat directory if it's now empty
 	// (for new structure: polecats/<name>/ contains only polecats/<name>/<rigname>/)
 	if polecatDir != clonePath {
+		// GT-1L3MY9: Clean up any orphaned .beads/ directory at polecat level.
+		// This can happen if the worktree cleanup was incomplete or from old state.
+		polecatBeadsDir := filepath.Join(polecatDir, ".beads")
+		_ = os.RemoveAll(polecatBeadsDir)
 		_ = os.Remove(polecatDir) // Non-fatal: only removes if empty
 	}
 
@@ -574,8 +594,14 @@ func (m *Manager) RepairWorktreeWithOptions(name string, force bool, opts AddOpt
 	// Create fresh worktree with unique branch name, starting from origin's default branch
 	// Old branches are left behind - they're ephemeral (never pushed to origin)
 	// and will be cleaned up by garbage collection
-	// Use base36 encoding for shorter branch names (8 chars vs 13 digits)
-	branchName := fmt.Sprintf("polecat/%s-%s", name, strconv.FormatInt(time.Now().UnixMilli(), 36))
+	// Branch naming: include issue ID when available for better traceability.
+	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 36)
+	var branchName string
+	if opts.HookBead != "" {
+		branchName = fmt.Sprintf("polecat/%s/%s@%s", name, opts.HookBead, timestamp)
+	} else {
+		branchName = fmt.Sprintf("polecat/%s-%s", name, timestamp)
+	}
 	if err := repoGit.WorktreeAddFromRef(newClonePath, branchName, startPoint); err != nil {
 		return nil, fmt.Errorf("creating fresh worktree from %s: %w", startPoint, err)
 	}
@@ -1006,9 +1032,9 @@ func (m *Manager) DetectStalePolecats(threshold int) ([]*StalenessInfo, error) {
 		polecatGit := git.NewGit(p.ClonePath)
 		info.CommitsBehind = countCommitsBehind(polecatGit, defaultBranch)
 
-		// Check for uncommitted work
+		// Check for uncommitted work (excluding .beads/ files which are synced across worktrees)
 		status, err := polecatGit.CheckUncommittedWork()
-		if err == nil && !status.Clean() {
+		if err == nil && !status.CleanExcludingBeads() {
 			info.HasUncommittedWork = true
 		}
 
