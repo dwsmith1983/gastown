@@ -18,6 +18,7 @@ import (
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/session"
+	"github.com/steveyegge/gastown/internal/templates"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/util"
 )
@@ -132,6 +133,11 @@ func (m *Manager) Start(foreground bool, agentOverride string) error {
 	runtimeConfig := config.ResolveRoleAgentConfig("refinery", townRoot, m.rig.Path)
 	if err := runtime.EnsureSettingsForRole(refineryParentDir, "refinery", runtimeConfig); err != nil {
 		return fmt.Errorf("ensuring runtime settings: %w", err)
+	}
+
+	// Regenerate CLAUDE.md with config overrides (supports town/rig context customization)
+	if err := templates.CreateRefineryCLAUDEmd(refineryParentDir, m.rig.Path, m.rig.Name, m.rig.DefaultBranch()); err != nil {
+		return fmt.Errorf("creating CLAUDE.md: %w", err)
 	}
 
 	// Build startup command first
