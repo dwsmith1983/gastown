@@ -434,12 +434,6 @@ func (c *OrphanProcessCheck) findRuntimeProcesses() ([]processInfo, error) {
 			continue
 		}
 
-		// Extract just the command name for display
-		cmd := fields[2]
-		if idx := strings.LastIndex(cmd, "/"); idx >= 0 {
-			cmd = cmd[idx+1:]
-		}
-
 		procs = append(procs, processInfo{
 			pid:  pid,
 			ppid: ppid,
