@@ -72,6 +72,11 @@ func showMoleculeExecutionPrompt(workDir, moleculeID string) {
 		fmt.Printf("**Step ID:** %s\n", step.ID)
 		fmt.Printf("**Status:** %s (ready to execute)\n\n", step.Status)
 
+		// Phase 4: Molecule Checkpoint - Step acknowledgment
+		fmt.Println(style.Bold.Render("📋 STEP CHECKPOINT"))
+		fmt.Println("Before executing, acknowledge: \"I am about to execute step: " + step.Title + "\"")
+		fmt.Println()
+
 		// Show step description if available
 		if step.Description != "" {
 			fmt.Println("### Instructions")
@@ -88,9 +93,10 @@ func showMoleculeExecutionPrompt(workDir, moleculeID string) {
 		fmt.Println(style.Bold.Render("→ EXECUTE THIS STEP NOW."))
 		fmt.Println()
 		fmt.Println("When complete:")
-		fmt.Printf("  1. Close the step: bd close %s\n", step.ID)
-		fmt.Println("  2. Check for next step: bd ready")
-		fmt.Println("  3. Continue until molecule complete")
+		fmt.Printf("  1. Acknowledge: \"Step '%s' complete.\"\n", step.Title)
+		fmt.Printf("  2. Close the step: bd close %s\n", step.ID)
+		fmt.Println("  3. Check for next step: bd ready")
+		fmt.Println("  4. Continue until molecule complete")
 	} else {
 		// No next step - molecule may be complete
 		fmt.Println(style.Bold.Render("✓ MOLECULE COMPLETE"))

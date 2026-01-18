@@ -628,6 +628,169 @@ func TestExplain(t *testing.T) {
 	})
 }
 
+// TestOutputRoleAnchor tests that outputRoleAnchor produces correct role reminders.
+// This is part of Phase 1: Role Anchoring for instruction compliance.
+func TestOutputRoleAnchor(t *testing.T) {
+	cases := []struct {
+		name     string
+		ctx      RoleContext
+		contains []string // Strings that should be in the output
+	}{
+		{
+			name: "mayor_anchor",
+			ctx:  RoleContext{Role: RoleMayor},
+			contains: []string{
+				"ROLE ANCHOR",
+				"Mayor",
+				"CLAUDE.md instructions",
+				"gt prime",
+			},
+		},
+		{
+			name: "deacon_anchor",
+			ctx:  RoleContext{Role: RoleDeacon},
+			contains: []string{
+				"ROLE ANCHOR",
+				"Deacon",
+				"CLAUDE.md instructions",
+				"mol steps",
+			},
+		},
+		{
+			name: "witness_anchor",
+			ctx:  RoleContext{Role: RoleWitness, Rig: "testrig"},
+			contains: []string{
+				"ROLE ANCHOR",
+				"Witness",
+				"testrig",
+				"CLAUDE.md instructions",
+			},
+		},
+		{
+			name: "polecat_anchor",
+			ctx:  RoleContext{Role: RolePolecat, Rig: "testrig", Polecat: "max"},
+			contains: []string{
+				"ROLE ANCHOR",
+				"Polecat",
+				"testrig/max",
+				"CLAUDE.md instructions",
+			},
+		},
+		{
+			name: "crew_anchor",
+			ctx:  RoleContext{Role: RoleCrew, Rig: "testrig", Polecat: "max"},
+			contains: []string{
+				"ROLE ANCHOR",
+				"Crew",
+				"testrig/max",
+				"CLAUDE.md instructions",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Capture stdout
+			oldStdout := os.Stdout
+			r, w, _ := os.Pipe()
+			os.Stdout = w
+
+			outputRoleAnchor(tc.ctx)
+
+			w.Close()
+			var buf bytes.Buffer
+			io.Copy(&buf, r)
+			os.Stdout = oldStdout
+			output := buf.String()
+
+			for _, expected := range tc.contains {
+				if !strings.Contains(output, expected) {
+					t.Errorf("expected output to contain %q, got: %s", expected, output)
+				}
+			}
+		})
+	}
+}
+
+// TestOutputStartupDirective_Acknowledgment tests that startup directives include acknowledgment.
+// This is part of Phase 2: Bootstrap Compliance for instruction compliance.
+func TestOutputStartupDirective_Acknowledgment(t *testing.T) {
+	cases := []struct {
+		name     string
+		ctx      RoleContext
+		contains []string
+	}{
+		{
+			name: "mayor_acknowledgment",
+			ctx:  RoleContext{Role: RoleMayor},
+			contains: []string{
+				"Acknowledge",
+				"I am Mayor",
+				"CLAUDE.md instructions",
+			},
+		},
+		{
+			name: "witness_acknowledgment",
+			ctx:  RoleContext{Role: RoleWitness, Rig: "testrig"},
+			contains: []string{
+				"Acknowledge",
+				"I am Witness",
+				"CLAUDE.md instructions",
+			},
+		},
+		{
+			name: "polecat_acknowledgment",
+			ctx:  RoleContext{Role: RolePolecat, Rig: "testrig", Polecat: "max"},
+			contains: []string{
+				"Acknowledge",
+				"I am testrig Polecat max",
+				"CLAUDE.md instructions",
+			},
+		},
+		{
+			name: "crew_acknowledgment",
+			ctx:  RoleContext{Role: RoleCrew, Rig: "testrig", Polecat: "max"},
+			contains: []string{
+				"Acknowledge",
+				"I am testrig Crew max",
+				"CLAUDE.md instructions",
+			},
+		},
+		{
+			name: "refinery_acknowledgment",
+			ctx:  RoleContext{Role: RoleRefinery, Rig: "testrig"},
+			contains: []string{
+				"Acknowledge",
+				"I am Refinery",
+				"CLAUDE.md instructions",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Capture stdout
+			oldStdout := os.Stdout
+			r, w, _ := os.Pipe()
+			os.Stdout = w
+
+			outputStartupDirective(tc.ctx)
+
+			w.Close()
+			var buf bytes.Buffer
+			io.Copy(&buf, r)
+			os.Stdout = oldStdout
+			output := buf.String()
+
+			for _, expected := range tc.contains {
+				if !strings.Contains(output, expected) {
+					t.Errorf("expected output to contain %q, got: %s", expected, output)
+				}
+			}
+		})
+	}
+}
+
 // TestDryRunSkipsSideEffects tests that --dry-run skips various side effects via CLI.
 func TestDryRunSkipsSideEffects(t *testing.T) {
 	// Find the gt binary
