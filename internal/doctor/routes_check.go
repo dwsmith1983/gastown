@@ -11,17 +11,12 @@ import (
 )
 
 // determineRigBeadsPath returns the correct route path for a rig based on its actual layout.
-// Some rigs have .beads at <rig>/mayor/rig/.beads (mayor clone layout),
-// others have .beads directly at <rig>/.beads (direct rig layout).
-// This matches the logic in rig.go's rigInit().
+// Uses ResolveBeadsDir to follow any redirects (e.g., rig/.beads/redirect -> mayor/rig/.beads).
 func determineRigBeadsPath(townRoot, rigName string) string {
-	// Check if mayor/rig/.beads exists (mayor clone layout)
-	mayorRigBeads := filepath.Join(townRoot, rigName, "mayor", "rig", ".beads")
-	if _, err := os.Stat(mayorRigBeads); err == nil {
-		return rigName + "/mayor/rig"
-	}
-	// Otherwise use rig root directly
-	return rigName
+	rigPath := filepath.Join(townRoot, rigName)
+	resolved := beads.ResolveBeadsDir(rigPath)
+	rel, _ := filepath.Rel(townRoot, resolved)
+	return strings.TrimSuffix(rel, "/.beads")
 }
 
 // RoutesCheck verifies that beads routing is properly configured.
