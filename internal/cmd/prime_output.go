@@ -256,6 +256,7 @@ func outputHandoffContent(ctx RoleContext) {
 
 // outputStartupDirective outputs role-specific instructions for the agent.
 // This tells agents like Mayor to announce themselves on startup.
+// Includes acknowledgment requirements (Phase 2: Bootstrap Compliance).
 func outputStartupDirective(ctx RoleContext) {
 	switch ctx.Role {
 	case RoleMayor:
@@ -263,7 +264,7 @@ func outputStartupDirective(ctx RoleContext) {
 		fmt.Println("---")
 		fmt.Println()
 		fmt.Println("**STARTUP PROTOCOL**: You are the Mayor. Please:")
-		fmt.Println("1. Announce: \"Mayor, checking in.\"")
+		fmt.Println("1. Acknowledge: \"I am Mayor. I have read and will follow my CLAUDE.md instructions.\"")
 		fmt.Println("2. Check mail: `gt mail inbox` - look for 🤝 HANDOFF messages")
 		fmt.Println("3. Check for attached work: `gt hook`")
 		fmt.Println("   - If mol attached → **RUN IT** (no human input needed)")
@@ -273,7 +274,7 @@ func outputStartupDirective(ctx RoleContext) {
 		fmt.Println("---")
 		fmt.Println()
 		fmt.Println("**STARTUP PROTOCOL**: You are the Witness. Please:")
-		fmt.Println("1. Announce: \"Witness, checking in.\"")
+		fmt.Println("1. Acknowledge: \"I am Witness. I have read and will follow my CLAUDE.md instructions.\"")
 		fmt.Println("2. Check mail: `gt mail inbox` - look for 🤝 HANDOFF messages")
 		fmt.Println("3. Check for attached patrol: `gt hook`")
 		fmt.Println("   - If mol attached → **RUN IT** (resume from current step)")
@@ -283,7 +284,7 @@ func outputStartupDirective(ctx RoleContext) {
 		fmt.Println("---")
 		fmt.Println()
 		fmt.Println("**STARTUP PROTOCOL**: You are a polecat. Please:")
-		fmt.Printf("1. Announce: \"%s Polecat %s, checking in.\"\n", ctx.Rig, ctx.Polecat)
+		fmt.Printf("1. Acknowledge: \"I am %s Polecat %s. I have read and will follow my CLAUDE.md instructions.\"\n", ctx.Rig, ctx.Polecat)
 		fmt.Println("2. Check mail: `gt mail inbox`")
 		fmt.Println("3. If there's a 🤝 HANDOFF message, read it for context")
 		fmt.Println("4. Check for attached work: `gt hook`")
@@ -294,7 +295,7 @@ func outputStartupDirective(ctx RoleContext) {
 		fmt.Println("---")
 		fmt.Println()
 		fmt.Println("**STARTUP PROTOCOL**: You are the Refinery. Please:")
-		fmt.Println("1. Announce: \"Refinery, checking in.\"")
+		fmt.Println("1. Acknowledge: \"I am Refinery. I have read and will follow my CLAUDE.md instructions.\"")
 		fmt.Println("2. Check mail: `gt mail inbox` - look for 🤝 HANDOFF messages")
 		fmt.Println("3. Check for attached patrol: `gt hook`")
 		fmt.Println("   - If mol attached → **RUN IT** (resume from current step)")
@@ -304,7 +305,7 @@ func outputStartupDirective(ctx RoleContext) {
 		fmt.Println("---")
 		fmt.Println()
 		fmt.Println("**STARTUP PROTOCOL**: You are a crew worker. Please:")
-		fmt.Printf("1. Announce: \"%s Crew %s, checking in.\"\n", ctx.Rig, ctx.Polecat)
+		fmt.Printf("1. Acknowledge: \"I am %s Crew %s. I have read and will follow my CLAUDE.md instructions.\"\n", ctx.Rig, ctx.Polecat)
 		fmt.Println("2. Check mail: `gt mail inbox`")
 		fmt.Println("3. If there's a 🤝 HANDOFF message, read it and continue the work")
 		fmt.Println("4. Check for attached work: `gt hook`")
@@ -320,13 +321,59 @@ func outputStartupDirective(ctx RoleContext) {
 		fmt.Println("---")
 		fmt.Println()
 		fmt.Println("**STARTUP PROTOCOL**: You are the Deacon. Please:")
-		fmt.Println("1. Announce: \"Deacon, checking in.\"")
+		fmt.Println("1. Acknowledge: \"I am Deacon. I have read and will follow my CLAUDE.md instructions.\"")
 		fmt.Println("2. Signal awake: `gt deacon heartbeat \"starting patrol\"`")
 		fmt.Println("3. Check mail: `gt mail inbox` - look for 🤝 HANDOFF messages")
 		fmt.Println("4. Check for attached patrol: `gt hook`")
 		fmt.Println("   - If mol attached → **RUN IT** (resume from current step)")
 		fmt.Println("   - If no mol → create patrol: `bd mol wisp mol-deacon-patrol`")
 	}
+
+	// Phase 1: Role Anchoring - Add role reminder at end of startup directive
+	outputRoleAnchor(ctx)
+}
+
+// outputRoleAnchor outputs a brief role reminder to reinforce instructions.
+// This implements Phase 1: Role Anchoring - periodic reinforcement of role identity.
+// The reminder helps prevent instruction drift as context fills up.
+func outputRoleAnchor(ctx RoleContext) {
+	fmt.Println()
+	fmt.Println("---")
+	fmt.Println()
+	fmt.Println(style.Bold.Render("📌 ROLE ANCHOR (always remember)"))
+	fmt.Println()
+
+	switch ctx.Role {
+	case RoleMayor:
+		fmt.Println("• You are Mayor - the global coordinator")
+		fmt.Println("• Follow your CLAUDE.md instructions exactly")
+		fmt.Println("• Run `gt prime` after compaction or if instructions feel unclear")
+	case RoleDeacon:
+		fmt.Println("• You are Deacon - the patrol executor")
+		fmt.Println("• Follow your CLAUDE.md instructions exactly")
+		fmt.Println("• Never skip mol steps - execute each one mechanically")
+		fmt.Println("• Run `gt prime` after compaction or if instructions feel unclear")
+	case RoleWitness:
+		fmt.Println("• You are Witness - the rig overseer for", ctx.Rig)
+		fmt.Println("• Follow your CLAUDE.md instructions exactly")
+		fmt.Println("• Never skip mol steps - execute each one mechanically")
+		fmt.Println("• Run `gt prime` after compaction or if instructions feel unclear")
+	case RoleRefinery:
+		fmt.Println("• You are Refinery - the merge processor for", ctx.Rig)
+		fmt.Println("• Follow your CLAUDE.md instructions exactly")
+		fmt.Println("• Never skip mol steps - execute each one mechanically")
+		fmt.Println("• Run `gt prime` after compaction or if instructions feel unclear")
+	case RolePolecat:
+		fmt.Printf("• You are Polecat %s/%s - a focused worker\n", ctx.Rig, ctx.Polecat)
+		fmt.Println("• Follow your CLAUDE.md instructions exactly")
+		fmt.Println("• Complete your assigned work, then signal done")
+		fmt.Println("• Run `gt prime` after compaction or if instructions feel unclear")
+	case RoleCrew:
+		fmt.Printf("• You are Crew %s/%s - a persistent worker\n", ctx.Rig, ctx.Polecat)
+		fmt.Println("• Follow your CLAUDE.md instructions exactly")
+		fmt.Println("• Run `gt prime` after compaction or if instructions feel unclear")
+	}
+	fmt.Println()
 }
 
 // outputAttachmentStatus checks for attached work molecule and outputs status.

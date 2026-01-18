@@ -56,6 +56,17 @@ func createValidSettings(t *testing.T, path string) {
 					},
 				},
 			},
+			"PreCompact": []any{
+				map[string]any{
+					"matcher": "**",
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": "gt prime",
+						},
+					},
+				},
+			},
 			"Stop": []any{
 				map[string]any{
 					"matcher": "**",
@@ -102,6 +113,17 @@ func createStaleSettings(t *testing.T, path string, missingElements ...string) {
 						map[string]any{
 							"type":    "command",
 							"command": "gt nudge deacon session-started",
+						},
+					},
+				},
+			},
+			"PreCompact": []any{
+				map[string]any{
+					"matcher": "**",
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": "gt prime",
 						},
 					},
 				},
@@ -159,6 +181,9 @@ func createStaleSettings(t *testing.T, path string, missingElements ...string) {
 		case "Stop":
 			hooks := settings["hooks"].(map[string]any)
 			delete(hooks, "Stop")
+		case "PreCompact":
+			hooks := settings["hooks"].(map[string]any)
+			delete(hooks, "PreCompact")
 		}
 	}
 
@@ -398,6 +423,35 @@ func TestClaudeSettingsCheck_MissingStopHook(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected details to mention Stop hook, got %v", result.Details)
+	}
+}
+
+// TestClaudeSettingsCheck_MissingPreCompactHook tests Phase 5: Compaction Survival.
+// PreCompact hook with gt prime is required to re-inject context after compaction.
+func TestClaudeSettingsCheck_MissingPreCompactHook(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create stale settings missing PreCompact hook (at correct location)
+	mayorSettings := filepath.Join(tmpDir, "mayor", ".claude", "settings.json")
+	createStaleSettings(t, mayorSettings, "PreCompact")
+
+	check := NewClaudeSettingsCheck()
+	ctx := &CheckContext{TownRoot: tmpDir}
+
+	result := check.Run(ctx)
+
+	if result.Status != StatusError {
+		t.Errorf("expected StatusError for missing PreCompact hook, got %v", result.Status)
+	}
+	found := false
+	for _, d := range result.Details {
+		if strings.Contains(d, "PreCompact") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected details to mention PreCompact hook, got %v", result.Details)
 	}
 }
 

@@ -364,6 +364,12 @@ func (c *ClaudeSettingsCheck) checkSettings(path, _ string) []string {
 		missing = append(missing, "Stop hook")
 	}
 
+	// Phase 5: Compaction Survival - Check PreCompact hook has gt prime
+	// This ensures context is re-injected after compaction to prevent instruction drift
+	if !c.hookHasPattern(hooks, "PreCompact", "gt prime") {
+		missing = append(missing, "PreCompact hook (gt prime)")
+	}
+
 	return missing
 }
 
