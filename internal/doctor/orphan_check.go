@@ -420,7 +420,6 @@ func (c *OrphanProcessCheck) findRuntimeProcesses() ([]processInfo, error) {
 
 		// Get full args
 		args := strings.Join(fields[2:], " ")
-
 		// Only match Gas Town Claude processes (have --dangerously-skip-permissions)
 		// This excludes user's personal Claude sessions
 		if !strings.Contains(args, "--dangerously-skip-permissions") {
@@ -433,6 +432,12 @@ func (c *OrphanProcessCheck) findRuntimeProcesses() ([]processInfo, error) {
 		}
 		if _, err := fmt.Sscanf(fields[1], "%d", &ppid); err != nil {
 			continue
+		}
+
+		// Extract just the command name for display
+		cmd := fields[2]
+		if idx := strings.LastIndex(cmd, "/"); idx >= 0 {
+			cmd = cmd[idx+1:]
 		}
 
 		procs = append(procs, processInfo{
