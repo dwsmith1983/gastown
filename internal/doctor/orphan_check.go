@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/steveyegge/gastown/internal/events"
@@ -254,21 +255,23 @@ func (c *OrphanSessionCheck) isValidSession(sess string, validRigs []string, may
 }
 
 // OrphanProcessCheck detects runtime processes that are not
-// running inside a tmux session. These may be user's personal sessions
-// or legitimately orphaned processes from crashed Gas Town sessions.
-// This check is informational only - it does not auto-fix since we cannot
-// distinguish user sessions from orphaned Gas Town processes.
+// running inside a tmux session. It distinguishes Gas Town processes
+// (which have --dangerously-skip-permissions flag) from personal sessions.
+// Only orphaned Gas Town processes are auto-fixed; personal sessions are protected.
 type OrphanProcessCheck struct {
-	BaseCheck
+	FixableCheck
+	orphanProcesses []processInfo // Cached during Run for use in Fix
 }
 
 // NewOrphanProcessCheck creates a new orphan process check.
 func NewOrphanProcessCheck() *OrphanProcessCheck {
 	return &OrphanProcessCheck{
-		BaseCheck: BaseCheck{
-			CheckName:        "orphan-processes",
-			CheckDescription: "Detect runtime processes outside tmux",
-			CheckCategory:    CategoryCleanup,
+		FixableCheck: FixableCheck{
+			BaseCheck: BaseCheck{
+				CheckName:        "orphan-processes",
+				CheckDescription: "Detect Gas Town processes outside tmux",
+				CheckCategory:    CategoryCleanup,
+			},
 		},
 	}
 }
@@ -305,19 +308,31 @@ func (c *OrphanProcessCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 	}
 
-	// Check which runtime processes are outside tmux
-	var outsideTmux []processInfo
+	// Categorize processes:
+	// - insideTmux: processes with tmux ancestor (safe)
+	// - orphanedGasTown: Gas Town processes without tmux ancestor (can fix)
+	// - orphanedPersonal: personal sessions without tmux (informational only)
 	var insideTmux int
+	var orphanedGasTown []processInfo
+	var orphanedPersonal []processInfo
 
 	for _, proc := range runtimeProcs {
 		if c.isOrphanProcess(proc, tmuxPIDs) {
-			outsideTmux = append(outsideTmux, proc)
+			if proc.isGasTown {
+				orphanedGasTown = append(orphanedGasTown, proc)
+			} else {
+				orphanedPersonal = append(orphanedPersonal, proc)
+			}
 		} else {
 			insideTmux++
 		}
 	}
 
-	if len(outsideTmux) == 0 {
+	// Cache orphaned Gas Town processes for Fix
+	c.orphanProcesses = orphanedGasTown
+
+	// No orphans at all
+	if len(orphanedGasTown) == 0 && len(orphanedPersonal) == 0 {
 		return &CheckResult{
 			Name:    c.Name(),
 			Status:  StatusOK,
@@ -325,25 +340,86 @@ func (c *OrphanProcessCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 	}
 
-	details := make([]string, 0, len(outsideTmux)+2)
-	details = append(details, "These may be your personal sessions or orphaned Gas Town processes.")
-	details = append(details, "Verify these are expected before manually killing any:")
-	for _, proc := range outsideTmux {
-		details = append(details, fmt.Sprintf("  PID %d: %s (parent: %d)", proc.pid, proc.cmd, proc.ppid))
+	// Build details
+	details := make([]string, 0)
+
+	if len(orphanedGasTown) > 0 {
+		details = append(details, fmt.Sprintf("Orphaned Gas Town processes (%d):", len(orphanedGasTown)))
+		for _, proc := range orphanedGasTown {
+			details = append(details, fmt.Sprintf("  PID %d: %s (will be killed with --fix)", proc.pid, proc.cmd))
+		}
 	}
 
-	return &CheckResult{
+	if len(orphanedPersonal) > 0 {
+		if len(orphanedGasTown) > 0 {
+			details = append(details, "")
+		}
+		details = append(details, fmt.Sprintf("Personal Claude sessions (%d) - PROTECTED:", len(orphanedPersonal)))
+		for _, proc := range orphanedPersonal {
+			details = append(details, fmt.Sprintf("  PID %d: %s (personal session, not auto-fixed)", proc.pid, proc.cmd))
+		}
+	}
+
+	// Only fail if there are Gas Town orphans to fix
+	status := StatusOK
+	if len(orphanedGasTown) > 0 {
+		status = StatusWarning
+	}
+
+	msg := fmt.Sprintf("Found %d orphaned Gas Town process(es)", len(orphanedGasTown))
+	if len(orphanedPersonal) > 0 {
+		msg += fmt.Sprintf(", %d personal session(s) protected", len(orphanedPersonal))
+	}
+
+	result := &CheckResult{
 		Name:    c.Name(),
-		Status:  StatusWarning,
-		Message: fmt.Sprintf("Found %d runtime process(es) running outside tmux", len(outsideTmux)),
+		Status:  status,
+		Message: msg,
 		Details: details,
 	}
+
+	if len(orphanedGasTown) > 0 {
+		result.FixHint = "Run 'gt doctor --fix' to kill orphaned Gas Town processes"
+	}
+
+	return result
+}
+
+// Fix kills orphaned Gas Town processes.
+// Only processes with --dangerously-skip-permissions are killed.
+// Personal Claude sessions (without the flag) are protected.
+func (c *OrphanProcessCheck) Fix(ctx *CheckContext) error {
+	if len(c.orphanProcesses) == 0 {
+		return nil
+	}
+
+	var lastErr error
+
+	for _, proc := range c.orphanProcesses {
+		// SAFEGUARD: Double-check this is a Gas Town process
+		if !proc.isGasTown {
+			continue
+		}
+
+		// Log pre-death event for crash investigation
+		_ = events.LogFeed(events.TypeSessionDeath, fmt.Sprintf("pid-%d", proc.pid),
+			events.SessionDeathPayload(fmt.Sprintf("pid-%d", proc.pid), "unknown", "orphan process cleanup", "gt doctor"))
+
+		// Kill the process
+		if err := exec.Command("kill", fmt.Sprintf("%d", proc.pid)).Run(); err != nil { //nolint:gosec // G204: PID is from internal process scan
+			lastErr = err
+		}
+	}
+
+	return lastErr
 }
 
 type processInfo struct {
-	pid  int
-	ppid int
-	cmd  string
+	pid       int
+	ppid      int
+	cmd       string
+	args      string // Full command line arguments
+	isGasTown bool   // Has --dangerously-skip-permissions flag
 }
 
 // getTmuxSessionPIDs returns PIDs of all tmux server processes and pane shell PIDs.
@@ -387,41 +463,25 @@ func (c *OrphanProcessCheck) getTmuxSessionPIDs() (map[int]bool, error) { //noli
 	return pids, nil
 }
 
-// findRuntimeProcesses finds Gas Town Claude processes (those with --dangerously-skip-permissions).
-// Only detects processes started by Gas Town, not user's personal Claude sessions.
+// findRuntimeProcesses finds all running runtime CLI processes.
+// Identifies Gas Town processes by the --dangerously-skip-permissions flag.
+// Excludes Claude.app desktop application and its helpers.
 func (c *OrphanProcessCheck) findRuntimeProcesses() ([]processInfo, error) {
 	var procs []processInfo
 
-	// Use ps with args to get full command line (needed to check for Gas Town signature)
-	out, err := exec.Command("ps", "-eo", "pid,ppid,args").Output()
+	// Use ps to find runtime processes with full command line
+	// -e: all processes, -o: output format with pid, ppid, comm, and args
+	out, err := exec.Command("ps", "-eo", "pid,ppid,comm,args").Output()
 	if err != nil {
 		return nil, err
 	}
 
+	// Pattern to exclude Claude.app and related desktop processes
+	excludePattern := regexp.MustCompile(`(?i)(Claude\.app|claude-native|chrome-native)`)
+
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			continue
-		}
-
-		// Extract command name (without path)
-		cmd := fields[2]
-		if idx := strings.LastIndex(cmd, "/"); idx >= 0 {
-			cmd = cmd[idx+1:]
-		}
-
-		// Only match claude/codex processes, not tmux or other launchers
-		// (tmux command line may contain --dangerously-skip-permissions as part of the launched command)
-		if cmd != "claude" && cmd != "claude-code" && cmd != "codex" {
-			continue
-		}
-
-		// Get full args
-		args := strings.Join(fields[2:], " ")
-
-		// Only match Gas Town Claude processes (have --dangerously-skip-permissions)
-		// This excludes user's personal Claude sessions
-		if !strings.Contains(args, "--dangerously-skip-permissions") {
+		if len(fields) < 4 {
 			continue
 		}
 
@@ -433,10 +493,32 @@ func (c *OrphanProcessCheck) findRuntimeProcesses() ([]processInfo, error) {
 			continue
 		}
 
+		// comm is just the executable name (no path, no args)
+		comm := fields[2]
+
+		// Only match actual claude/codex executables, not tmux launchers
+		// This prevents matching "tmux new-session ... && claude ..."
+		if comm != "claude" && comm != "claude-code" && comm != "codex" {
+			continue
+		}
+
+		// args is the full command line
+		args := strings.Join(fields[3:], " ")
+
+		// Skip desktop app processes
+		if excludePattern.MatchString(args) {
+			continue
+		}
+
+		// Gas Town processes have --dangerously-skip-permissions flag
+		isGasTown := strings.Contains(args, "--dangerously-skip-permissions")
+
 		procs = append(procs, processInfo{
-			pid:  pid,
-			ppid: ppid,
-			cmd:  cmd,
+			pid:       pid,
+			ppid:      ppid,
+			cmd:       comm,
+			args:      args,
+			isGasTown: isGasTown,
 		})
 	}
 
