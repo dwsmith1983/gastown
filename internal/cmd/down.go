@@ -272,6 +272,32 @@ func runDown(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Phase 5b: Kill stray Gas Town Claude processes (outside tmux)
+	// These are Claude processes with --dangerously-skip-permissions that aren't in tmux
+	if !downDryRun {
+		strays, err := findStrayGTProcesses()
+		if err == nil && len(strays) > 0 {
+			var killed int
+			for _, pid := range strays {
+				proc, err := os.FindProcess(pid)
+				if err != nil {
+					continue
+				}
+				if err := proc.Signal(syscall.SIGTERM); err == nil {
+					killed++
+				}
+			}
+			if killed > 0 {
+				printDownStatus("Stray GT processes", true, fmt.Sprintf("%d killed", killed))
+			}
+		}
+	} else if downDryRun {
+		strays, _ := findStrayGTProcesses()
+		if len(strays) > 0 {
+			printDownStatus("Stray GT processes", true, fmt.Sprintf("%d would kill", len(strays)))
+		}
+	}
+
 	// Phase 6: Verification (--all only) - check for respawned processes
 	if downAll && !downDryRun {
 		time.Sleep(500 * time.Millisecond)

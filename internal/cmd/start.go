@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -606,6 +607,10 @@ func runGracefulShutdown(t *tmux.Tmux, gtSessions []string, townRoot string) err
 		stopDaemonIfRunning(townRoot)
 	}
 
+	// Phase 7: Kill stray Gas Town Claude processes
+	fmt.Printf("\nPhase 7: Cleaning up stray processes...\n")
+	killStrayGTProcesses()
+
 	fmt.Println()
 	fmt.Printf("%s Graceful shutdown complete (%d sessions stopped)\n", style.Bold.Render("✓"), stopped)
 	return nil
@@ -638,6 +643,11 @@ func runImmediateShutdown(t *tmux.Tmux, gtSessions []string, townRoot string) er
 		fmt.Println("Stopping daemon...")
 		stopDaemonIfRunning(townRoot)
 	}
+
+	// Kill stray Gas Town Claude processes
+	fmt.Println()
+	fmt.Println("Cleaning up stray processes...")
+	killStrayGTProcesses()
 
 	fmt.Println()
 	fmt.Printf("%s Gas Town shutdown complete (%d sessions stopped)\n", style.Bold.Render("✓"), stopped)
@@ -854,6 +864,36 @@ func stopDaemonIfRunning(townRoot string) {
 			fmt.Printf("  %s Killed %d orphaned daemon(s)\n",
 				style.Bold.Render("✓"), killed)
 		}
+	}
+}
+
+// killStrayGTProcesses finds and kills Gas Town Claude processes running outside tmux.
+// These are processes with --dangerously-skip-permissions that escaped tmux sessions.
+func killStrayGTProcesses() {
+	strays, err := findStrayGTProcesses()
+	if err != nil {
+		fmt.Printf("  %s Error finding stray processes: %v\n", style.Dim.Render("○"), err)
+		return
+	}
+
+	if len(strays) == 0 {
+		fmt.Printf("  %s No stray processes\n", style.Dim.Render("○"))
+		return
+	}
+
+	var killed int
+	for _, pid := range strays {
+		proc, err := os.FindProcess(pid)
+		if err != nil {
+			continue
+		}
+		if err := proc.Signal(syscall.SIGTERM); err == nil {
+			killed++
+		}
+	}
+
+	if killed > 0 {
+		fmt.Printf("  %s Killed %d stray Gas Town process(es)\n", style.Bold.Render("✓"), killed)
 	}
 }
 
