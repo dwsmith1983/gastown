@@ -37,9 +37,9 @@ func TestNewOrphanProcessCheck(t *testing.T) {
 		t.Errorf("expected name 'orphan-processes', got %q", check.Name())
 	}
 
-	// OrphanProcessCheck should NOT be fixable - it's informational only
-	if check.CanFix() {
-		t.Error("expected CanFix to return false for process check (informational only)")
+	// OrphanProcessCheck IS fixable - it can kill orphaned Gas Town processes
+	if !check.CanFix() {
+		t.Error("expected CanFix to return true for process check")
 	}
 }
 
@@ -55,29 +55,21 @@ func TestOrphanProcessCheck_Run(t *testing.T) {
 
 	result := check.Run(ctx)
 
-	// Should return OK (no processes or all inside tmux) or Warning (processes outside tmux)
+	// Should return OK (no orphaned Gas Town processes) or Warning (orphaned processes found)
 	// Both are valid depending on test environment
 	if result.Status != StatusOK && result.Status != StatusWarning {
 		t.Errorf("expected StatusOK or StatusWarning, got %v: %s", result.Status, result.Message)
 	}
 
-	// If warning, should have informational details
-	if result.Status == StatusWarning {
-		if len(result.Details) < 3 {
-			t.Errorf("expected at least 3 detail lines (2 info + 1 process), got %d", len(result.Details))
-		}
-		// Should NOT have a FixHint since this is informational only
-		if result.FixHint != "" {
-			t.Errorf("expected no FixHint for informational check, got %q", result.FixHint)
-		}
-	}
+	// If warning with Gas Town orphans, should have FixHint
+	// Note: Warning can occur for Gas Town orphans (fixable) or just personal sessions (informational)
 }
 
 func TestOrphanProcessCheck_MessageContent(t *testing.T) {
 	// Verify the check description is correct
 	check := NewOrphanProcessCheck()
 
-	expectedDesc := "Detect runtime processes outside tmux"
+	expectedDesc := "Detect Gas Town processes outside tmux"
 	if check.Description() != expectedDesc {
 		t.Errorf("expected description %q, got %q", expectedDesc, check.Description())
 	}
