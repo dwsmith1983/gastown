@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -245,7 +246,33 @@ func runDown(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Phase 5: Verification (--all only)
+	// Phase 5: Kill orphaned Claude processes (always, with force)
+	if !downDryRun {
+		orphans, err := findOrphanProcesses()
+		if err == nil && len(orphans) > 0 {
+			fmt.Printf("Killing %d orphaned Claude process(es)...\n", len(orphans))
+			var killed int
+			for _, o := range orphans {
+				proc, err := os.FindProcess(o.PID)
+				if err != nil {
+					continue
+				}
+				if err := proc.Signal(syscall.SIGTERM); err == nil {
+					killed++
+				}
+			}
+			if killed > 0 {
+				printDownStatus("Orphan processes", true, fmt.Sprintf("%d killed", killed))
+			}
+		}
+	} else if downDryRun {
+		orphans, _ := findOrphanProcesses()
+		if len(orphans) > 0 {
+			printDownStatus("Orphan processes", true, fmt.Sprintf("%d would kill", len(orphans)))
+		}
+	}
+
+	// Phase 6: Verification (--all only) - check for respawned processes
 	if downAll && !downDryRun {
 		time.Sleep(500 * time.Millisecond)
 		respawned := verifyShutdown(t, townRoot)
@@ -264,7 +291,7 @@ func runDown(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Phase 6: Nuke tmux server (--nuke only, DESTRUCTIVE)
+	// Phase 7: Nuke tmux server (--nuke only, DESTRUCTIVE)
 	if downNuke {
 		if downDryRun {
 			printDownStatus("Tmux server", true, "would kill (DESTRUCTIVE)")
