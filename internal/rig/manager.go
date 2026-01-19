@@ -340,7 +340,10 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 		}
 	}
 	fmt.Printf("   ✓ Created shared bare repo\n")
-	bareGit := git.NewGitWithDir(bareRepoPath, "")
+	// Use rigPath as workDir to avoid running git commands from town root.
+	// Town root may be a git repo, and running bare repo commands from there
+	// can cause git to get confused between the two repos.
+	bareGit := git.NewGitWithDir(bareRepoPath, rigPath)
 
 	// Determine default branch: use provided value or auto-detect from remote
 	var defaultBranch string
