@@ -399,6 +399,12 @@ func initTownBeads(townPath string) error {
 		}
 	}
 
+	// Verify .beads directory was actually created (bd init can exit 0 without creating it)
+	beadsDir := filepath.Join(townPath, ".beads")
+	if _, statErr := os.Stat(beadsDir); os.IsNotExist(statErr) {
+		return fmt.Errorf("bd init succeeded but .beads directory not created (check bd daemon interference)")
+	}
+
 	// Explicitly set issue_prefix config (bd init --prefix may not persist it in newer versions).
 	prefixSetCmd := exec.Command("bd", "config", "set", "issue_prefix", "hq")
 	prefixSetCmd.Dir = townPath
