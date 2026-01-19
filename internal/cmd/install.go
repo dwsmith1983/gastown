@@ -221,6 +221,13 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		fmt.Printf("   ✓ Created deacon/.claude/settings.json\n")
 	}
 
+	// Create boot directory (deacon/dogs/boot/) for Boot watchdog.
+	// This avoids gt doctor warning on fresh install.
+	bootDir := filepath.Join(deaconDir, "dogs", "boot")
+	if err := os.MkdirAll(bootDir, 0755); err != nil {
+		fmt.Printf("   %s Could not create boot directory: %v\n", style.Dim.Render("⚠"), err)
+	}
+
 	// Initialize git BEFORE beads so that bd can compute repository fingerprint.
 	// The fingerprint is required for the daemon to start properly.
 	if installGit || installGitHub != "" {
