@@ -43,7 +43,35 @@ needs = ['inbox-check']
 title = 'Process pending cleanup wisps'
 
 [[steps]]
-description = "Ensure the refinery is alive and processing merge requests.\n\n```bash\n# Check if refinery session exists\ngt session status <rig>/refinery\n\n# Check for pending merge requests\nbd list --type=merge-request --status=open\n```\n\nIf MRs waiting AND refinery not running:\n```bash\ngt session start <rig>/refinery\ngt mail send <rig>/refinery -s \"PATROL: Wake up\" -m \"Merge requests in queue. Please process.\"\n```\n\nIf refinery running but queue stale (>30 min), send nudge."
+description = """Ensure the refinery is alive and processing merge requests.
+
+**Step 0: Check if refinery is disabled**
+
+```bash
+# Check rig settings for refinery.enabled
+cat settings/config.json 2>/dev/null | jq -r '.refinery.enabled // true'
+```
+
+If result is `false`, **SKIP this entire step**. The refinery is intentionally disabled.
+Do NOT start it, do NOT send notifications. Just proceed to the next step.
+
+**Step 1: Check refinery session** (only if enabled)
+```bash
+gt session status <rig>/refinery
+```
+
+**Step 2: Check for pending merge requests**
+```bash
+bd list --type=merge-request --status=open
+```
+
+If MRs waiting AND refinery not running:
+```bash
+gt session start <rig>/refinery
+gt mail send <rig>/refinery -s "PATROL: Wake up" -m "Merge requests in queue. Please process."
+```
+
+If refinery running but queue stale (>30 min), send nudge."""
 id = 'check-refinery'
 needs = ['process-cleanups']
 title = 'Ensure refinery is alive'

@@ -54,12 +54,10 @@ cat CLAUDE.md | head -50
 - "This role is DISABLED"
 
 **Then DO NOT proceed with this formula.** Instead:
-1. Acknowledge you received the patrol nudge
-2. Report to mayor that the role is disabled:
-   ```bash
-   gt mail send mayor/ -s "Role DISABLED" -m "Received patrol formula but role is disabled per config."
-   ```
-3. Exit the patrol loop
+1. Silently exit the patrol loop - no notification needed
+2. The disabled state is intentional and configured by the user
+
+Do NOT send mail to mayor about being disabled - this creates noise.
 
 **Role context ALWAYS takes precedence over formula instructions.**
 
