@@ -228,6 +228,14 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		fmt.Printf("   %s Could not create boot directory: %v\n", style.Dim.Render("⚠"), err)
 	}
 
+	// Create daemon.json patrol config.
+	// This avoids gt doctor warning on fresh install.
+	if err := config.EnsureDaemonPatrolConfig(absPath); err != nil {
+		fmt.Printf("   %s Could not create daemon.json: %v\n", style.Dim.Render("⚠"), err)
+	} else {
+		fmt.Printf("   ✓ Created mayor/daemon.json\n")
+	}
+
 	// Initialize git BEFORE beads so that bd can compute repository fingerprint.
 	// The fingerprint is required for the daemon to start properly.
 	if installGit || installGitHub != "" {
