@@ -116,7 +116,15 @@ func (g *Git) wrapError(err error, stdout, stderr string, args []string) error {
 
 // Clone clones a repository to the destination.
 func (g *Git) Clone(url, dest string) error {
-	cmd := exec.Command("git", "clone", url, dest)
+	// Ensure destination directory's parent exists
+	destParent := filepath.Dir(dest)
+	if err := os.MkdirAll(destParent, 0755); err != nil {
+		return fmt.Errorf("creating destination parent: %w", err)
+	}
+	// Run clone from the destination's parent directory to avoid interference
+	// from any git repo at the current working directory
+	cmd := exec.Command("git", "clone", url, filepath.Base(dest))
+	cmd.Dir = destParent
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -134,7 +142,15 @@ func (g *Git) Clone(url, dest string) error {
 // CloneWithReference clones a repository using a local repo as an object reference.
 // This saves disk by sharing objects without changing remotes.
 func (g *Git) CloneWithReference(url, dest, reference string) error {
-	cmd := exec.Command("git", "clone", "--reference-if-able", reference, url, dest)
+	// Ensure destination directory's parent exists
+	destParent := filepath.Dir(dest)
+	if err := os.MkdirAll(destParent, 0755); err != nil {
+		return fmt.Errorf("creating destination parent: %w", err)
+	}
+	// Run clone from the destination's parent directory to avoid interference
+	// from any git repo at the current working directory
+	cmd := exec.Command("git", "clone", "--reference-if-able", reference, url, filepath.Base(dest))
+	cmd.Dir = destParent
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -152,7 +168,15 @@ func (g *Git) CloneWithReference(url, dest, reference string) error {
 // CloneBare clones a repository as a bare repo (no working directory).
 // This is used for the shared repo architecture where all worktrees share a single git database.
 func (g *Git) CloneBare(url, dest string) error {
-	cmd := exec.Command("git", "clone", "--bare", url, dest)
+	// Ensure destination directory's parent exists
+	destParent := filepath.Dir(dest)
+	if err := os.MkdirAll(destParent, 0755); err != nil {
+		return fmt.Errorf("creating destination parent: %w", err)
+	}
+	// Run clone from the destination's parent directory to avoid interference
+	// from any git repo at the current working directory
+	cmd := exec.Command("git", "clone", "--bare", url, filepath.Base(dest))
+	cmd.Dir = destParent
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -205,7 +229,15 @@ func configureRefspec(repoPath string) error {
 
 // CloneBareWithReference clones a bare repository using a local repo as an object reference.
 func (g *Git) CloneBareWithReference(url, dest, reference string) error {
-	cmd := exec.Command("git", "clone", "--bare", "--reference-if-able", reference, url, dest)
+	// Ensure destination directory's parent exists
+	destParent := filepath.Dir(dest)
+	if err := os.MkdirAll(destParent, 0755); err != nil {
+		return fmt.Errorf("creating destination parent: %w", err)
+	}
+	// Run clone from the destination's parent directory to avoid interference
+	// from any git repo at the current working directory
+	cmd := exec.Command("git", "clone", "--bare", "--reference-if-able", reference, url, filepath.Base(dest))
+	cmd.Dir = destParent
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
